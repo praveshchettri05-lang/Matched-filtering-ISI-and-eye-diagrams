@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Experiment 8 — Matched Filtering, ISI &amp; Eye Diagrams Simulator</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="header">
+    <div class="header-content">
+        <h1>Experiment 8 — Matched Filtering, ISI &amp; Eye Diagrams</h1>
+        <p>Digital Communication Laboratory · Interactive Simulator</p>
+    </div>
+</header>
+
+<main class="simulator">
+    <!-- ===== Controls Panel ===== -->
+    <aside class="controls" id="controls">
+        <div class="control-group">
+            <h3>System</h3>
+            <label>
+                Number of Bits
+                <select id="numBits">
+                    <option value="500">500</option>
+                    <option value="1000">1000</option>
+                    <option value="2000" selected>2000</option>
+                    <option value="5000">5000</option>
+                </select>
+            </label>
+            <label>
+                Samples / Symbol
+                <select id="sps">
+                    <option value="4">4</option>
+                    <option value="8" selected>8</option>
+                    <option value="16">16</option>
+                </select>
+            </label>
+        </div>
+
+        <div class="control-group">
+            <h3>Filter &amp; Channel</h3>
+            <label>
+                Eb/N₀ (dB) <span id="snrVal">10</span>
+                <input type="range" id="snr" min="-2" max="20" step="0.5" value="10">
+            </label>
+            <label>
+                Roll-off β <span id="betaVal">0.35</span>
+                <input type="range" id="beta" min="0.05" max="1.0" step="0.05" value="0.35">
+            </label>
+            <label>
+                Filter Span (symbols) <span id="spanVal">6</span>
+                <input type="range" id="span" min="2" max="12" step="1" value="6">
+            </label>
+            <label>
+                Timing Offset (ΔT/T) <span id="offsetVal">0.00</span>
+                <input type="range" id="offset" min="-0.5" max="0.5" step="0.0625" value="0">
+            </label>
+        </div>
+
+        <div class="control-group">
+            <h3>Multipath Channel</h3>
+            <label>
+                Channel Model
+                <select id="channel">
+                    <option value="none">No ISI (AWGN only)</option>
+                    <option value="mild">Mild ISI (α=0.3, τ=T)</option>
+                    <option value="severe">Severe ISI (α=0.7, τ=T)</option>
+                    <option value="twopath">Two-path ISI</option>
+                </select>
+            </label>
+        </div>
+
+        <button id="runBtn" class="run-btn">▶ Run Simulation</button>
+
+        <div class="info-panel" id="infoPanel">
+            <div class="info-item">
+                <span class="info-label">BER (measured)</span>
+                <span class="info-value" id="berMeas">—</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">BER (theory)</span>
+                <span class="info-value" id="berTheory">—</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Eye Height</span>
+                <span class="info-value" id="eyeHeight">—</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Cascade Delay</span>
+                <span class="info-value" id="cascadeDelay">—</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Filter Taps</span>
+                <span class="info-value" id="filterTaps">—</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ===== Main Content ===== -->
+    <div class="main-content">
+        <nav class="tab-bar">
+            <button class="tab active" data-tab="signals">📡 Signal Chain</button>
+            <button class="tab" data-tab="eye">👁 Eye Diagram</button>
+            <button class="tab" data-tab="analysis">📊 Analysis</button>
+            <button class="tab" data-tab="multipath">🔀 Multipath ISI</button>
+        </nav>
+
+        <!-- Tab 1: Signal Chain (Tasks 28 & 29) -->
+        <div class="tab-content active" id="tab-signals">
+            <div class="plot-grid two-col">
+                <div class="plot-wrapper"><canvas id="plotTx"></canvas></div>
+                <div class="plot-wrapper"><canvas id="plotRx"></canvas></div>
+                <div class="plot-wrapper"><canvas id="plotMF"></canvas></div>
+                <div class="plot-wrapper"><canvas id="plotRC"></canvas></div>
+            </div>
+        </div>
+
+        <!-- Tab 2: Eye Diagram (Interactive) -->
+        <div class="tab-content" id="tab-eye">
+            <div class="plot-grid eye-layout">
+                <div class="plot-wrapper"><canvas id="plotEye"></canvas></div>
+                <div class="plot-wrapper"><canvas id="plotDet"></canvas></div>
+            </div>
+        </div>
+
+        <!-- Tab 3: Analysis (Tasks 30) -->
+        <div class="tab-content" id="tab-analysis">
+            <div class="plot-grid two-col">
+                <div class="plot-wrapper"><canvas id="plotEhSnr"></canvas></div>
+                <div class="plot-wrapper"><canvas id="plotBerOff"></canvas></div>
+                <div class="plot-wrapper"><canvas id="plotBerSnr"></canvas></div>
+                <div class="plot-wrapper"><canvas id="plotEhBeta"></canvas></div>
+            </div>
+        </div>
+
+        <!-- Tab 4: Multipath ISI (Task 31) -->
+        <div class="tab-content" id="tab-multipath">
+            <div class="plot-grid two-col">
+                <div class="plot-wrapper"><canvas id="plotIsi0"></canvas></div>
+                <div class="plot-wrapper"><canvas id="plotIsi1"></canvas></div>
+                <div class="plot-wrapper"><canvas id="plotIsi2"></canvas></div>
+                <div class="plot-wrapper"><canvas id="plotIsi3"></canvas></div>
+            </div>
+        </div>
+
+        <!-- Observations Panel -->
+        <div class="observations" id="observations">
+            <h3>📋 Observations &amp; Interpretation</h3>
+            <div id="obsText">
+                <p class="obs-hint">Click <strong>▶ Run Simulation</strong> to begin. Adjust parameters on the left and explore each tab.</p>
+            </div>
+        </div>
+    </div>
+</main>
+
+<footer>
+    <p>Digital Communication Laboratory — Experiment 8 Simulator · No external toolbox required · Built with HTML5 Canvas</p>
+</footer>
+
+<script src="dsp.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
