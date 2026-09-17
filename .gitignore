@@ -1,0 +1,24 @@
+# MATLAB temporary files
+*.asv
+*.m~
+*.autosave
+
+# Simulink autosave
+*.slxc
+*.bak
+
+# MEX binaries
+*.mex*
+
+# Generated results (re-generate by running the script)
+results/*.png
+
+# OS files
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Editor files
+*.swp
+*.swo
+*~
