@@ -8,7 +8,7 @@ A fully interactive browser-based simulator for Experiment 8. No MATLAB, no tool
 
 1. Clone or download this repository
 2. Open **`index.html`** in Chrome, Firefox, Edge, or Safari
-3. Adjust parameters with the sliders and explore all 4 tabs
+3. Adjust parameters with the sliders and explore all 5 tabs
 
 > No server required — runs entirely in the browser using HTML5 Canvas and vanilla JavaScript.
 
@@ -20,6 +20,7 @@ A fully interactive browser-based simulator for Experiment 8. No MATLAB, no tool
 | 29 | Apply matched RRC filter, compensate filter delay | 📡 Signal Chain |
 | 30 | Vary SNR, roll-off, span, sampling offset | 📊 Analysis |
 | 31 | Introduce multipath ISI channel | 🔀 Multipath ISI |
+| — | Review expected and observed behavior | 📋 Observations |
 
 ### Required Visualisations ✅
 - [x] Transmit / matched-filter output

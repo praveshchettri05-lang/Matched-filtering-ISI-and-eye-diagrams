@@ -184,6 +184,7 @@ body {
 /* ---- Tab Content ---- */
 .tab-content { display: none; flex: 1; min-height: 0; }
 .tab-content.active { display: flex; flex-direction: column; }
+.observations-tab.active { display: block; }
 
 /* ---- Plot Grids ---- */
 .plot-grid {
@@ -226,6 +227,11 @@ body {
     flex-shrink: 0;
     max-height: 300px;
     overflow-y: auto;
+}
+.observations-tab .observations {
+    height: 100%;
+    max-height: none;
+    margin-top: 0;
 }
 .observations h3 {
     font-size: 0.9rem;

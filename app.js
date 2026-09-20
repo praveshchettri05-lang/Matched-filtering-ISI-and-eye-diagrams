@@ -332,6 +332,7 @@ const App = {
                 case 'eye':       this.renderEye(); break;
                 case 'analysis':  this.renderAnalysis(); break;
                 case 'multipath': this.renderMultipath(); break;
+                case 'observations': this.renderSignals(); break;
             }
         } catch (e) { console.error('Render error:', e); }
     },
