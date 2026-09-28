@@ -1,0 +1,1448 @@
+"""
+Build a fully interactive index.html — all DSP computed in JavaScript,
+all plots drawn on Canvas, fully offline. No PNGs needed.
+"""
+import sys, os
+sys.stdout.reconfigure(encoding="utf-8")
+
+HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Exp 9 — ASK &amp; BFSK Interactive Simulator</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d1117;--surface:#161b22;--card:#1c2128;--border:#30363d;
+  --text:#e6edf3;--muted:#8b949e;--placeholder:#484f58;
+  --accent:#58a6ff;--green:#3fb950;--purple:#d2a8ff;
+  --orange:#ffa657;--red:#f78166;--yellow:#e3b341;
+  --radius:10px;--sidebar:300px;
+}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;
+  display:flex;flex-direction:column;height:100vh;overflow:hidden}
+
+/* ── TOP BAR ── */
+header.topbar{
+  background:var(--surface);border-bottom:1px solid var(--border);
+  height:48px;display:flex;align-items:center;gap:12px;padding:0 16px;
+  flex-shrink:0;z-index:50;
+}
+header.topbar .logo{font-weight:800;font-size:.95rem;color:var(--accent)}
+header.topbar .subtitle{font-size:.75rem;color:var(--muted)}
+header.topbar .spacer{flex:1}
+.run-btn{
+  background:var(--accent);color:#000;border:none;border-radius:7px;
+  font-size:.8rem;font-weight:700;padding:.35rem 1rem;cursor:pointer;
+  transition:opacity .15s;display:flex;align-items:center;gap:5px;
+}
+.run-btn:hover{opacity:.85}
+.run-btn:active{transform:scale(.97)}
+.auto-label{font-size:.72rem;color:var(--muted);display:flex;align-items:center;gap:4px}
+.auto-label input[type=checkbox]{accent-color:var(--accent)}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0}
+.status-dot.running{background:var(--orange);animation:pulse .7s infinite alternate}
+@keyframes pulse{to{opacity:.3}}
+
+/* ── LAYOUT ── */
+.app{display:flex;flex:1;overflow:hidden}
+
+/* ── SIDEBAR ── */
+aside.sidebar{
+  width:var(--sidebar);flex-shrink:0;background:var(--surface);
+  border-right:1px solid var(--border);overflow-y:auto;
+  display:flex;flex-direction:column;gap:0;
+}
+aside.sidebar::-webkit-scrollbar{width:4px}
+aside.sidebar::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.ctrl-section{border-bottom:1px solid var(--border);padding:10px 12px}
+.ctrl-section-title{
+  font-size:.65rem;text-transform:uppercase;letter-spacing:.1em;
+  color:var(--muted);margin-bottom:8px;font-weight:600;
+}
+.ctrl-row{display:flex;flex-direction:column;gap:3px;margin-bottom:8px}
+.ctrl-row:last-child{margin-bottom:0}
+.ctrl-label{display:flex;justify-content:space-between;align-items:center;
+  font-size:.75rem;color:var(--text)}
+.ctrl-label .val{font-family:monospace;color:var(--accent);font-weight:600;
+  background:var(--card);padding:.1rem .4rem;border-radius:4px;min-width:60px;text-align:right}
+input[type=range]{
+  -webkit-appearance:none;width:100%;height:4px;
+  background:var(--border);border-radius:2px;outline:none;
+}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:14px;height:14px;border-radius:50%;
+  background:var(--accent);cursor:pointer;border:2px solid var(--bg);
+}
+input[type=range]::-webkit-slider-thumb:hover{background:var(--purple)}
+select,input[type=number],input[type=text]{
+  background:var(--card);border:1px solid var(--border);color:var(--text);
+  border-radius:5px;padding:.3rem .5rem;font-size:.78rem;width:100%;
+  outline:none;font-family:monospace;
+}
+select:focus,input:focus{border-color:var(--accent)}
+.select-row{display:flex;gap:6px}
+.select-row select{flex:1}
+.radio-group{display:flex;gap:6px;flex-wrap:wrap}
+.radio-btn{
+  flex:1;text-align:center;padding:.28rem .4rem;border:1px solid var(--border);
+  border-radius:6px;font-size:.72rem;cursor:pointer;color:var(--muted);
+  background:var(--card);transition:all .15s;user-select:none;
+}
+.radio-btn.active{background:var(--accent);color:#000;border-color:var(--accent);font-weight:700}
+
+/* Stats in sidebar */
+.live-stats{padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.stat-row{display:flex;justify-content:space-between;align-items:center;
+  font-size:.76rem;padding:.3rem .5rem;background:var(--card);
+  border-radius:6px;border:1px solid var(--border)}
+.stat-row .sname{color:var(--muted)}
+.stat-row .sval{font-family:monospace;font-weight:600}
+.sval.good{color:var(--green)}
+.sval.warn{color:var(--orange)}
+.sval.bad {color:var(--red)}
+.sval.info{color:var(--accent)}
+
+/* ── MAIN AREA ── */
+main.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+
+/* ── TABS ── */
+.tabs{
+  background:var(--surface);border-bottom:1px solid var(--border);
+  display:flex;gap:2px;padding:6px 8px 0;flex-shrink:0;overflow-x:auto;
+}
+.tabs::-webkit-scrollbar{height:3px}
+.tabs::-webkit-scrollbar-thumb{background:var(--border)}
+.tab{
+  padding:.4rem .9rem;border-radius:7px 7px 0 0;font-size:.78rem;
+  cursor:pointer;color:var(--muted);border:1px solid transparent;
+  border-bottom:none;background:transparent;transition:all .15s;
+  white-space:nowrap;
+}
+.tab:hover{color:var(--text);background:var(--card)}
+.tab.active{
+  color:var(--text);background:var(--card);
+  border-color:var(--border);font-weight:600;
+}
+
+/* ── CANVAS AREA ── */
+.plot-area{flex:1;overflow:hidden;position:relative;background:var(--card)}
+.canvas-wrap{
+  display:none;width:100%;height:100%;
+  position:absolute;inset:0;
+  overflow-y:auto;
+  overflow-x:hidden;
+}
+.canvas-wrap.active{display:flex;flex-direction:column}
+canvas.plot{display:block;width:100%;flex:1;min-height:220px;}
+
+/* Special: side-by-side canvases */
+.canvas-wrap.dual{flex-direction:row;flex-wrap:wrap;}
+.canvas-wrap.dual canvas{flex:1;min-width:300px;width:100%;}
+.canvas-wrap.quad{
+  display:grid;grid-template-columns:1fr 1fr;
+  grid-template-rows:1fr 1fr;
+}
+.canvas-wrap.quad canvas{width:100%;height:100%}
+
+/* ── TOOLTIP ── */
+.tooltip{
+  position:absolute;background:var(--surface);border:1px solid var(--border);
+  border-radius:7px;padding:6px 10px;font-size:.75rem;pointer-events:none;
+  display:none;z-index:100;
+}
+
+/* ── FOOTER ── */
+footer.bar{
+  background:var(--surface);border-top:1px solid var(--border);
+  padding:4px 14px;font-size:.7rem;color:var(--muted);
+  display:flex;align-items:center;gap:10px;flex-shrink:0;
+}
+footer.bar .spacer{flex:1}
+.badge-chip{
+  background:var(--card);border:1px solid var(--border);
+  border-radius:4px;padding:.1rem .45rem;font-family:monospace;
+  color:var(--muted);font-size:.68rem;
+}
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<header class="topbar">
+  <div class="status-dot" id="statusDot"></div>
+  <span class="logo">&#9889; ASK &amp; BFSK Simulator</span>
+  <span class="subtitle">Experiment 9 &mdash; Digital Communication Laboratory</span>
+  <div class="spacer"></div>
+  <label class="auto-label">
+    <input type="checkbox" id="autoRun" checked> Auto-update
+  </label>
+  <button class="run-btn" onclick="runAll()">&#9654; Run Simulation</button>
+</header>
+
+<div class="app">
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+
+  <!-- MODULATION -->
+  <div class="ctrl-section">
+    <div class="ctrl-section-title">&#128261; Modulation</div>
+
+    <div class="ctrl-row">
+      <div class="ctrl-label">Bit Rate Rb<span class="val" id="v_rb">1000 bps</span></div>
+      <input type="range" id="s_rb" min="200" max="5000" step="100" value="1000" oninput="sync('rb',this.value,'v_rb',v=>`${v} bps`)">
+    </div>
+
+    <div class="ctrl-row">
+      <div class="ctrl-label">ASK Carrier f<sub>c</sub><span class="val" id="v_fc">8000 Hz</span></div>
+      <input type="range" id="s_fc" min="1000" max="20000" step="500" value="8000" oninput="sync('fc',this.value,'v_fc',v=>`${v} Hz`)">
+    </div>
+
+    <div class="ctrl-row">
+      <div class="ctrl-label">ASK Amplitude A₁<span class="val" id="v_a1">1.00</span></div>
+      <input type="range" id="s_a1" min="0.1" max="2.0" step="0.05" value="1.0" oninput="sync('a1',this.value,'v_a1',v=>parseFloat(v).toFixed(2))">
+    </div>
+
+    <div class="ctrl-row">
+      <div class="ctrl-label">BFSK Mark f<sub>1</sub><span class="val" id="v_f1">7000 Hz</span></div>
+      <input type="range" id="s_f1" min="500" max="19000" step="500" value="7000" oninput="sync('f1',this.value,'v_f1',v=>`${v} Hz`)">
+    </div>
+
+    <div class="ctrl-row">
+      <div class="ctrl-label">BFSK Space f<sub>2</sub><span class="val" id="v_f2">9000 Hz</span></div>
+      <input type="range" id="s_f2" min="500" max="19000" step="500" value="9000" oninput="sync('f2',this.value,'v_f2',v=>`${v} Hz`)">
+    </div>
+  </div>
+
+  <!-- CHANNEL -->
+  <div class="ctrl-section">
+    <div class="ctrl-section-title">&#128268; Channel (AWGN)</div>
+
+    <div class="ctrl-row">
+      <div class="ctrl-label">Eb/N0 Preview<span class="val" id="v_snr">8 dB</span></div>
+      <input type="range" id="s_snr" min="-4" max="20" step="1" value="8" oninput="sync('snrPreview',this.value,'v_snr',v=>`${v} dB`)">
+    </div>
+  </div>
+
+  <!-- SIMULATION -->
+  <div class="ctrl-section">
+    <div class="ctrl-section-title">&#9881; Simulation</div>
+
+    <div class="ctrl-row">
+      <div class="ctrl-label">Bits to Display<span class="val" id="v_nb">8</span></div>
+      <input type="range" id="s_nb" min="4" max="16" step="1" value="8" oninput="sync('nbDisplay',this.value,'v_nb',v=>v)">
+    </div>
+
+    <div class="ctrl-row">
+      <div class="ctrl-label">BER Monte-Carlo Bits<span class="val" id="v_ber_n">512</span></div>
+      <input type="range" id="s_bern" min="128" max="2048" step="128" value="512" oninput="sync('berN',this.value,'v_ber_n',v=>v)">
+    </div>
+
+    <div class="ctrl-row">
+      <div class="ctrl-label">Oversampling (sps)<span class="val" id="v_sps">40</span></div>
+      <input type="range" id="s_sps" min="20" max="100" step="10" value="40" oninput="sync('sps',this.value,'v_sps',v=>v)">
+    </div>
+
+    <div class="ctrl-row">
+      <div class="ctrl-label">Random Seed</div>
+      <input type="number" id="s_seed" value="42" min="1" max="9999" oninput="P.seed=parseInt(this.value)||42;triggerAuto()">
+    </div>
+
+    <div class="ctrl-row">
+      <div class="ctrl-label" style="margin-bottom:4px">Detection Mode</div>
+      <div class="radio-group">
+        <div class="radio-btn active" id="det_coh" onclick="setDet('coherent')">Coherent</div>
+        <div class="radio-btn" id="det_nc"  onclick="setDet('noncoherent')">Noncoherent</div>
+        <div class="radio-btn" id="det_both" onclick="setDet('both')">Both</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LIVE STATS -->
+  <div class="live-stats">
+    <div class="ctrl-section-title" style="padding:0 0 4px">&#128200; Live Statistics</div>
+    <div class="stat-row"><span class="sname">fs (sampling)</span><span class="sval info" id="st_fs">–</span></div>
+    <div class="stat-row"><span class="sname">Δf · Tb</span><span class="sval info" id="st_df">–</span></div>
+    <div class="stat-row"><span class="sname">Orthogonality</span><span class="sval good" id="st_orth">–</span></div>
+    <div class="stat-row"><span class="sname">⟨φ₁,φ₂⟩</span><span class="sval info" id="st_ip">–</span></div>
+    <div class="stat-row"><span class="sname">ASK BER (coh)</span><span class="sval" id="st_ask_c">–</span></div>
+    <div class="stat-row"><span class="sname">ASK BER (nc)</span><span class="sval" id="st_ask_n">–</span></div>
+    <div class="stat-row"><span class="sname">BFSK BER (coh)</span><span class="sval" id="st_bfsk_c">–</span></div>
+    <div class="stat-row"><span class="sname">BFSK BER (nc)</span><span class="sval" id="st_bfsk_n">–</span></div>
+  </div>
+
+</aside>
+
+<!-- MAIN AREA -->
+<main class="main">
+
+  <!-- TABS -->
+  <div class="tabs">
+    <div class="tab active" onclick="showTab(0)">&#128214; Quick Guide</div>
+    <div class="tab" onclick="showTab(1)">&#127800; Waveforms</div>
+    <div class="tab" onclick="showTab(2)">&#128225; Power Spectra</div>
+    <div class="tab" onclick="showTab(3)">&#128267; Correlator Outputs</div>
+    <div class="tab" onclick="showTab(4)">&#128202; Decision Histograms</div>
+    <div class="tab" onclick="showTab(5)">&#128200; BER Curves</div>
+    <div class="tab" onclick="showTab(6)">&#128300; Orthogonality</div>
+  </div>
+
+  <!-- PLOT AREA -->
+  <div class="plot-area">
+
+    <!-- Tab 0: Guide -->
+    <div class="canvas-wrap active" id="wrap0" style="padding: 24px; overflow-y: auto; display: block;">
+      <h2 style="color: var(--accent); margin-bottom: 12px;">Welcome to the ASK &amp; BFSK Simulator!</h2>
+      <p style="margin-bottom: 16px; font-size: 0.9rem;">This interactive tool helps you understand Digital Modulation techniques.</p>
+      <ul style="list-style: none; margin-bottom: 24px; color: var(--muted); line-height: 1.8; font-size: 0.85rem;">
+        <li><b style="color: var(--text);">Waveforms:</b> See how digital bits (0s and 1s) are converted into analog signals.</li>
+        <li><b style="color: var(--text);">Power Spectra:</b> Visualize the frequency content and bandwidth of the modulated signals.</li>
+        <li><b style="color: var(--text);">Correlator Outputs:</b> Observe how the receiver interprets the incoming signal.</li>
+        <li><b style="color: var(--text);">Decision Histograms:</b> See how noise causes the receiver's decisions to blur together.</li>
+        <li><b style="color: var(--text);">BER Curves:</b> The ultimate performance metric - Bit Error Rate vs. Signal-to-Noise Ratio.</li>
+        <li><b style="color: var(--text);">Orthogonality:</b> See how the frequency spacing between tones affects BFSK performance.</li>
+      </ul>
+      <h3 style="color: var(--green); margin-bottom: 10px;">How to use:</h3>
+      <p style="color: var(--muted); line-height: 1.6; font-size: 0.85rem;">
+        Use the sidebar controls on the left to tweak parameters like bit rate, carrier frequencies, and noise level (Eb/N0). The graphs will update automatically! <br><br>
+        If the graphs seem squished, just scroll down to see the rest of them.
+      </p>
+    </div>
+
+    <!-- Tab 1: Waveforms (3 stacked) -->
+    <div class="canvas-wrap" id="wrap1">
+      <canvas id="c_bits" class="plot"></canvas>
+      <canvas id="c_ask"  class="plot"></canvas>
+      <canvas id="c_bfsk" class="plot"></canvas>
+    </div>
+
+    <!-- Tab 2: PSD (side by side) -->
+    <div class="canvas-wrap dual" id="wrap2">
+      <canvas id="c_psd_ask"  class="plot"></canvas>
+      <canvas id="c_psd_bfsk" class="plot"></canvas>
+    </div>
+
+    <!-- Tab 3: Correlator outputs (stacked) -->
+    <div class="canvas-wrap" id="wrap3">
+      <canvas id="c_corr_ask"  class="plot"></canvas>
+      <canvas id="c_corr_bfsk" class="plot"></canvas>
+    </div>
+
+    <!-- Tab 4: Histograms (side by side) -->
+    <div class="canvas-wrap dual" id="wrap4">
+      <canvas id="c_hist_ask"  class="plot"></canvas>
+      <canvas id="c_hist_bfsk" class="plot"></canvas>
+    </div>
+
+    <!-- Tab 5: BER curves -->
+    <div class="canvas-wrap" id="wrap5">
+      <canvas id="c_ber" class="plot"></canvas>
+    </div>
+
+    <!-- Tab 6: Orthogonality -->
+    <div class="canvas-wrap" id="wrap6">
+      <canvas id="c_orth" class="plot"></canvas>
+    </div>
+
+  </div>
+
+</main>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<footer class="bar">
+  <span>Experiment 9 &mdash; ASK &amp; BFSK Simulator</span>
+  <span class="spacer"></span>
+  <span class="badge-chip" id="ft_time">Ready</span>
+  <span class="badge-chip">Python: ask_fsk_simulator.py</span>
+  <span class="badge-chip">Offline &mdash; No internet required</span>
+</footer>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     JAVASCRIPT — Complete DSP + Rendering Engine
+     ═══════════════════════════════════════════════════════════════ -->
+<script>
+"use strict";
+
+// ──────────────────────────────────────────────────────────────────
+// GLOBAL PARAMS
+// ──────────────────────────────────────────────────────────────────
+const P = {
+  rb: 1000, fc: 8000, f1: 7000, f2: 9000,
+  a1: 1.0, a0: 0.0,
+  sps: 40,
+  snrPreview: 8,
+  nbDisplay: 8,
+  berN: 512,
+  seed: 42,
+  detection: 'coherent',
+};
+Object.defineProperty(P, 'fs', { get: () => P.rb * P.sps });
+Object.defineProperty(P, 'Tb', { get: () => 1 / P.rb });
+
+let currentTab = 0;
+let autoRun = true;
+let simRunning = false;
+
+// ──────────────────────────────────────────────────────────────────
+// UI HELPERS
+// ──────────────────────────────────────────────────────────────────
+function sync(key, val, labelId, fmt) {
+  P[key] = parseFloat(val);
+  document.getElementById(labelId).textContent = fmt(val);
+  triggerAuto();
+}
+
+function setDet(mode) {
+  P.detection = mode;
+  ['det_coh','det_nc','det_both'].forEach(id => document.getElementById(id).classList.remove('active'));
+  const map = {coherent:'det_coh', noncoherent:'det_nc', both:'det_both'};
+  document.getElementById(map[mode]).classList.add('active');
+  triggerAuto();
+}
+
+function triggerAuto() {
+  if (document.getElementById('autoRun').checked) runAll();
+}
+
+document.getElementById('autoRun').addEventListener('change', e => {
+  autoRun = e.target.checked;
+});
+
+function showTab(i) {
+  currentTab = i;
+  document.querySelectorAll('.canvas-wrap').forEach((w,j) => {
+    w.classList.toggle('active', j === i);
+  });
+  document.querySelectorAll('.tab').forEach((t,j) => {
+    t.classList.toggle('active', j === i);
+  });
+  renderCurrentTab();
+}
+
+// ──────────────────────────────────────────────────────────────────
+// SEEDED PRNG  (Mulberry32)
+// ──────────────────────────────────────────────────────────────────
+function makePRNG(seed) {
+  let s = (seed >>> 0) + 1;
+  return function() {
+    s = (s + 0x6D2B79F5) >>> 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function generateBits(n, seed) {
+  const rng = makePRNG(seed);
+  const bits = new Uint8Array(n);
+  for (let i = 0; i < n; i++) bits[i] = rng() < 0.5 ? 0 : 1;
+  return bits;
+}
+
+// ──────────────────────────────────────────────────────────────────
+// MODULATION
+// ──────────────────────────────────────────────────────────────────
+function modulateASK(bits, p) {
+  const N = p.sps, dt = 1/p.fs;
+  const sig = new Float64Array(bits.length * N);
+  for (let i = 0; i < bits.length; i++) {
+    const A = bits[i] ? p.a1 : p.a0;
+    for (let j = 0; j < N; j++) {
+      const t = (i * N + j) * dt;
+      sig[i*N+j] = A * Math.cos(2*Math.PI*p.fc*t);
+    }
+  }
+  return sig;
+}
+
+function modulateBFSK(bits, p) {
+  const N = p.sps, dt = 1/p.fs;
+  const sig = new Float64Array(bits.length * N);
+  let phase = 0;
+  for (let i = 0; i < bits.length; i++) {
+    const freq = bits[i] ? p.f1 : p.f2;
+    for (let j = 0; j < N; j++) {
+      phase += 2*Math.PI*freq*dt;
+      sig[i*N+j] = Math.cos(phase);
+    }
+  }
+  return sig;
+}
+
+// ──────────────────────────────────────────────────────────────────
+// AWGN  (Box-Muller)
+// ──────────────────────────────────────────────────────────────────
+function addAWGN(signal, EbN0_dB, p, seed) {
+  const rng = makePRNG(seed);
+  const EbN0 = Math.pow(10, EbN0_dB/10);
+  let power = 0;
+  for (let v of signal) power += v*v;
+  power /= signal.length;
+  const sigma = Math.sqrt(power / (2 * EbN0 * p.sps));
+  const out = new Float64Array(signal.length);
+  for (let i = 0; i < signal.length; i += 2) {
+    const u1 = Math.max(rng(), 1e-15), u2 = rng();
+    const mag = sigma * Math.sqrt(-2*Math.log(u1));
+    out[i]   = signal[i]   + mag*Math.cos(2*Math.PI*u2);
+    if (i+1 < signal.length)
+      out[i+1] = signal[i+1] + mag*Math.sin(2*Math.PI*u2);
+  }
+  return out;
+}
+
+// ──────────────────────────────────────────────────────────────────
+// COHERENT RECEIVERS
+// ──────────────────────────────────────────────────────────────────
+function correlatorASK(rx, bits, p) {
+  const N = p.sps, dt = 1/p.fs;
+  const stats = new Float64Array(bits.length);
+  for (let k = 0; k < bits.length; k++) {
+    let sum = 0;
+    for (let j = 0; j < N; j++) {
+      const t = (k*N+j)*dt;
+      sum += rx[k*N+j] * Math.cos(2*Math.PI*p.fc*t);
+    }
+    stats[k] = sum * dt;
+  }
+  const z1 = p.a1*N*dt/2, z0 = p.a0*N*dt/2;
+  const thresh = (z1+z0)/2;
+  const decisions = new Uint8Array(bits.length);
+  for (let k = 0; k < bits.length; k++) decisions[k] = stats[k] >= thresh ? 1 : 0;
+  return {stats, thresh, decisions};
+}
+
+function correlatorBFSK(rx, bits, p) {
+  const N = p.sps, dt = 1/p.fs;
+  const z1 = new Float64Array(bits.length);
+  const z2 = new Float64Array(bits.length);
+  for (let k = 0; k < bits.length; k++) {
+    let s1=0, s2=0;
+    for (let j = 0; j < N; j++) {
+      const t = (k*N+j)*dt;
+      const r = rx[k*N+j];
+      s1 += r * Math.cos(2*Math.PI*p.f1*t);
+      s2 += r * Math.cos(2*Math.PI*p.f2*t);
+    }
+    z1[k]=s1*dt; z2[k]=s2*dt;
+  }
+  const decisions = new Uint8Array(bits.length);
+  for (let k=0;k<bits.length;k++) decisions[k]=z1[k]>=z2[k]?1:0;
+  return {z1, z2, decisions};
+}
+
+// ──────────────────────────────────────────────────────────────────
+// NON-COHERENT RECEIVERS
+// ──────────────────────────────────────────────────────────────────
+// FFT (Cooley-Tukey in-place)
+function fft(re, im, inv) {
+  const n = re.length;
+  for (let i=1,j=0; i<n; i++) {
+    let bit=n>>1;
+    for (;j&bit;bit>>=1) j^=bit;
+    j^=bit;
+    if (i<j){
+      let t=re[i];re[i]=re[j];re[j]=t;
+      t=im[i];im[i]=im[j];im[j]=t;
+    }
+  }
+  for (let len=2;len<=n;len<<=1){
+    const ang = (inv?1:-1)*2*Math.PI/len;
+    const wr=Math.cos(ang), wi=Math.sin(ang);
+    for (let i=0;i<n;i+=len){
+      let cr=1,ci=0;
+      for (let j=0;j<len>>1;j++){
+        const ur=re[i+j],ui=im[i+j];
+        const vr=re[i+j+(len>>1)]*cr-im[i+j+(len>>1)]*ci;
+        const vi=re[i+j+(len>>1)]*ci+im[i+j+(len>>1)]*cr;
+        re[i+j]=ur+vr;im[i+j]=ui+vi;
+        re[i+j+(len>>1)]=ur-vr;im[i+j+(len>>1)]=ui-vi;
+        const ncr=cr*wr-ci*wi;ci=cr*wi+ci*wr;cr=ncr;
+      }
+    }
+  }
+  if (inv) for (let i=0;i<n;i++){re[i]/=n;im[i]/=n;}
+}
+
+function nextPow2(n){let p=1;while(p<n)p<<=1;return p;}
+
+function computeEnvelope(signal) {
+  const n = nextPow2(signal.length);
+  const re = new Float64Array(n), im = new Float64Array(n);
+  for (let i=0;i<signal.length;i++) re[i]=signal[i];
+  fft(re,im,false);
+  // Hilbert: double positive freqs, zero negative
+  for (let k=1;k<n/2;k++){re[k]*=2;im[k]*=2;}
+  for (let k=n/2+1;k<n;k++){re[k]=0;im[k]=0;}
+  fft(re,im,true);
+  const env = new Float64Array(signal.length);
+  for (let i=0;i<signal.length;i++)
+    env[i]=Math.sqrt(signal[i]*signal[i]+im[i]*im[i]);
+  return env;
+}
+
+function envelopeASK(rx, bits, p) {
+  const env = computeEnvelope(rx);
+  const stats = new Float64Array(bits.length);
+  for (let k=0;k<bits.length;k++){
+    let s=0;
+    for (let j=0;j<p.sps;j++) s+=env[k*p.sps+j];
+    stats[k]=s/p.sps;
+  }
+  let mn=Infinity,mx=-Infinity;
+  for (let v of stats){if(v<mn)mn=v;if(v>mx)mx=v;}
+  const thresh=(mn+mx)/2;
+  const decisions=new Uint8Array(bits.length);
+  for (let k=0;k<bits.length;k++) decisions[k]=stats[k]>=thresh?1:0;
+  return {stats,thresh,decisions};
+}
+
+function energyBFSK(rx, bits, p) {
+  const {z1,z2} = correlatorBFSK(rx,bits,p);
+  const E1=new Float64Array(bits.length),E2=new Float64Array(bits.length);
+  for (let k=0;k<bits.length;k++){E1[k]=z1[k]*z1[k];E2[k]=z2[k]*z2[k];}
+  const decisions=new Uint8Array(bits.length);
+  for (let k=0;k<bits.length;k++) decisions[k]=E1[k]>=E2[k]?1:0;
+  return {E1,E2,decisions};
+}
+
+// ──────────────────────────────────────────────────────────────────
+// PSD  (Welch)
+// ──────────────────────────────────────────────────────────────────
+function computePSD(signal, fs, nfft=512) {
+  const step = nfft>>1;
+  const win = new Float64Array(nfft);
+  for (let i=0;i<nfft;i++) win[i]=0.5*(1-Math.cos(2*Math.PI*i/(nfft-1)));
+  const winPow = win.reduce((a,v)=>a+v*v,0);
+  const psd = new Float64Array(nfft/2+1);
+  let cnt = 0;
+  for (let s=0;s+nfft<=signal.length;s+=step){
+    const re=new Float64Array(nfft),im=new Float64Array(nfft);
+    for (let i=0;i<nfft;i++) re[i]=signal[s+i]*win[i];
+    fft(re,im,false);
+    for (let i=0;i<=nfft/2;i++) psd[i]+=re[i]*re[i]+im[i]*im[i];
+    cnt++;
+  }
+  if (cnt===0) cnt=1;
+  const scale=1/(cnt*fs*winPow);
+  const freq=new Float64Array(nfft/2+1);
+  for (let i=0;i<=nfft/2;i++){
+    freq[i]=i*fs/nfft;
+    psd[i]*=scale*(i>0&&i<nfft/2?2:1);
+  }
+  return {freq,psd};
+}
+
+// ──────────────────────────────────────────────────────────────────
+// ORTHOGONALITY
+// ──────────────────────────────────────────────────────────────────
+function innerProduct(f1,f2,Tb,fs){
+  const N=Math.round(Tb*fs), dt=1/fs;
+  let s=0;
+  for (let i=0;i<N;i++){
+    const t=i*dt;
+    s+=Math.cos(2*Math.PI*f1*t)*Math.cos(2*Math.PI*f2*t)*dt;
+  }
+  return s;
+}
+
+function computeOrthoCurve(p){
+  const pts=300;
+  const dfArr=new Float64Array(pts);
+  const ipArr=new Float64Array(pts);
+  const maxDf=4*p.rb;
+  for (let i=0;i<pts;i++){
+    const df=i*maxDf/(pts-1);
+    dfArr[i]=df/p.rb;
+    const fmid=(p.f1+p.f2)/2;
+    ipArr[i]=innerProduct(fmid-df/2, fmid+df/2, p.Tb, p.fs);
+  }
+  return {dfArr,ipArr};
+}
+
+// ──────────────────────────────────────────────────────────────────
+// THEORETICAL BER
+// ──────────────────────────────────────────────────────────────────
+function erfcApprox(x){
+  // Abramowitz & Stegun 7.1.26 approximation
+  const t=1/(1+0.3275911*Math.abs(x));
+  const poly=t*(0.254829592+t*(-0.284496736+t*(1.421413741+t*(-1.453152027+t*1.061405429))));
+  return poly*Math.exp(-x*x)*(x>=0?1:2-poly*Math.exp(-x*x));
+}
+function Qfn(x){ return 0.5*erfcApprox(x/Math.SQRT2); }
+
+function berTheory(EbN0_dB, scheme) {
+  const r=Math.pow(10,EbN0_dB/10);
+  switch(scheme){
+    case 'ask_c':  return Qfn(Math.sqrt(r));
+    case 'ask_nc': return 0.5*Math.exp(-r/4);
+    case 'bfsk_c': return Qfn(Math.sqrt(r));
+    case 'bfsk_nc':return 0.5*Math.exp(-r/2);
+    default: return 0;
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────
+// MONTE-CARLO BER
+// ──────────────────────────────────────────────────────────────────
+function berMC(mod, det, EbN0_dB, p, nBits){
+  const bits=generateBits(nBits,p.seed+17);
+  const tx = mod==='ask' ? modulateASK(bits,p) : modulateBFSK(bits,p);
+  const rx = addAWGN(tx, EbN0_dB, p, p.seed+31);
+  let dec;
+  if (mod==='ask' && det==='coherent') dec=correlatorASK(rx,bits,p).decisions;
+  else if (mod==='ask' && det==='noncoherent') dec=envelopeASK(rx,bits,p).decisions;
+  else if (mod==='bfsk' && det==='coherent') dec=correlatorBFSK(rx,bits,p).decisions;
+  else dec=energyBFSK(rx,bits,p).decisions;
+  let err=0;
+  for (let k=0;k<nBits;k++) if (bits[k]!==dec[k]) err++;
+  return err/nBits;
+}
+
+function computeAllBER(p){
+  const snrs=[];
+  for (let s=-4;s<=16;s+=2) snrs.push(s);
+  const res={snrs, ask_c:[], ask_nc:[], bfsk_c:[], bfsk_nc:[]};
+  for (const s of snrs){
+    res.ask_c.push(Math.max(berMC('ask','coherent',s,p,p.berN),1e-6));
+    res.ask_nc.push(Math.max(berMC('ask','noncoherent',s,p,p.berN),1e-6));
+    res.bfsk_c.push(Math.max(berMC('bfsk','coherent',s,p,p.berN),1e-6));
+    res.bfsk_nc.push(Math.max(berMC('bfsk','noncoherent',s,p,p.berN),1e-6));
+  }
+  return res;
+}
+
+// ──────────────────────────────────────────────────────────────────
+// CANVAS PLOTTING HELPERS
+// ──────────────────────────────────────────────────────────────────
+const DARK = {
+  bg:     '#1c2128',
+  grid:   '#21262d',
+  axis:   '#30363d',
+  text:   '#8b949e',
+  text2:  '#e6edf3',
+  accent: '#58a6ff',
+  green:  '#3fb950',
+  purple: '#d2a8ff',
+  orange: '#ffa657',
+  red:    '#f78166',
+  yellow: '#e3b341',
+};
+
+function resize(canvas) {
+  const dpr = window.devicePixelRatio || 1;
+  const r = canvas.getBoundingClientRect();
+  canvas.width  = r.width  * dpr;
+  canvas.height = r.height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  return {ctx, W: r.width, H: r.height};
+}
+
+function clearCanvas(ctx, W, H, title) {
+  ctx.fillStyle = DARK.bg;
+  ctx.fillRect(0,0,W,H);
+  if (title) {
+    ctx.fillStyle = DARK.text2;
+    ctx.font = `600 12px 'Segoe UI',sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(title, W/2, 18);
+  }
+}
+
+// margins
+const M = {top:30, right:20, bottom:42, left:60};
+
+function drawAxes(ctx, W, H, xLabel, yLabel, title) {
+  const pw = W - M.left - M.right;
+  const ph = H - M.top - M.bottom;
+
+  ctx.strokeStyle = DARK.axis;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(M.left, M.top);
+  ctx.lineTo(M.left, M.top+ph);
+  ctx.lineTo(M.left+pw, M.top+ph);
+  ctx.stroke();
+
+  if (title) {
+    ctx.fillStyle = DARK.text2;
+    ctx.font = `600 11px 'Segoe UI',sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(title, M.left+pw/2, 18);
+  }
+  if (xLabel) {
+    ctx.fillStyle = DARK.text;
+    ctx.font = `10px 'Segoe UI',sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(xLabel, M.left+pw/2, H-4);
+  }
+  if (yLabel) {
+    ctx.save();
+    ctx.translate(13, M.top+ph/2);
+    ctx.rotate(-Math.PI/2);
+    ctx.fillStyle = DARK.text;
+    ctx.font = `10px 'Segoe UI',sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(yLabel, 0, 0);
+    ctx.restore();
+  }
+  return {pw, ph};
+}
+
+function drawGrid(ctx, W, H, nx, ny, xmin, xmax, ymin, ymax, xFmt, yFmt) {
+  const pw = W - M.left - M.right;
+  const ph = H - M.top - M.bottom;
+  const toX = v => M.left + (v-xmin)/(xmax-xmin)*pw;
+  const toY = v => M.top  + ph - (v-ymin)/(ymax-ymin)*ph;
+
+  ctx.strokeStyle = DARK.grid; ctx.lineWidth = 0.5;
+  ctx.fillStyle = DARK.text; ctx.font = `9px monospace`;
+
+  for (let i=0;i<=nx;i++){
+    const v = xmin + i*(xmax-xmin)/nx;
+    const x = toX(v);
+    ctx.beginPath(); ctx.moveTo(x, M.top); ctx.lineTo(x, M.top+ph); ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.fillText(xFmt ? xFmt(v,i) : v.toFixed(1), x, M.top+ph+13);
+  }
+  for (let i=0;i<=ny;i++){
+    const v = ymin + i*(ymax-ymin)/ny;
+    const y = toY(v);
+    ctx.beginPath(); ctx.moveTo(M.left, y); ctx.lineTo(M.left+pw, y); ctx.stroke();
+    ctx.textAlign = 'right';
+    ctx.fillText(yFmt ? yFmt(v,i) : v.toFixed(2), M.left-4, y+3);
+  }
+  return {toX, toY};
+}
+
+function plotLine(ctx, xs, ys, color, lw=1.5){
+  if (!xs.length) return;
+  ctx.strokeStyle = color; ctx.lineWidth = lw;
+  ctx.beginPath(); ctx.moveTo(xs[0],ys[0]);
+  for (let i=1;i<xs.length;i++) ctx.lineTo(xs[i],ys[i]);
+  ctx.stroke();
+}
+
+function plotDots(ctx, xs, ys, color, r=3){
+  ctx.fillStyle = color;
+  for (let i=0;i<xs.length;i++){
+    ctx.beginPath(); ctx.arc(xs[i],ys[i],r,0,Math.PI*2); ctx.fill();
+  }
+}
+
+function drawLegend(ctx, items, x, y){
+  ctx.font = `9px 'Segoe UI',sans-serif`;
+  for (let i=0;i<items.length;i++){
+    const [color, label] = items[i];
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y+i*14-7, 18, 4);
+    ctx.fillStyle = DARK.text2;
+    ctx.textAlign = 'left';
+    ctx.fillText(label, x+22, y+i*14);
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────
+// PLOT: WAVEFORMS (3 stacked canvases)
+// ──────────────────────────────────────────────────────────────────
+function plotWaveforms(bits, askSig, bfskSig, p) {
+  const nb = Math.min(bits.length, p.nbDisplay);
+  const N  = nb * p.sps;
+  const dt = 1/p.fs;
+
+  function drawWave(canvasId, sig, color, title, isStep) {
+    const canvas = document.getElementById(canvasId);
+    const {ctx,W,H} = resize(canvas);
+    clearCanvas(ctx,W,H);
+    const {pw,ph} = drawAxes(ctx,W,H,'Time [ms]','Amplitude',title);
+
+    let mn=-1.2, mx=1.2;
+    if (!isStep){
+      let minV=Infinity,maxV=-Infinity;
+      for (let i=0;i<N;i++){if(sig[i]<minV)minV=sig[i];if(sig[i]>maxV)maxV=sig[i];}
+      const pad=(maxV-minV)*0.15||0.3;
+      mn=minV-pad; mx=maxV+pad;
+    }
+
+    const tmax = N*dt*1000;
+    const {toX,toY} = drawGrid(ctx,W,H,nb,4,0,tmax,mn,mx,
+      (v)=>v.toFixed(1),(v)=>v.toFixed(2));
+
+    // Shade bits
+    for (let k=0;k<nb;k++){
+      const x1=toX(k*p.Tb*1000), x2=toX((k+1)*p.Tb*1000);
+      ctx.fillStyle = bits[k]?'rgba(88,166,255,.07)':'rgba(247,129,102,.07)';
+      ctx.fillRect(x1,M.top,x2-x1,ph);
+      // Bit label
+      ctx.fillStyle = bits[k]?DARK.accent:DARK.red;
+      ctx.font='bold 10px monospace'; ctx.textAlign='center';
+      ctx.fillText(bits[k], (x1+x2)/2, M.top+12);
+    }
+
+    // Draw signal
+    if (isStep) {
+      const vals = new Float64Array(N);
+      for (let i=0;i<N;i++) vals[i]=sig[Math.floor(i/p.sps)];
+      ctx.strokeStyle=color; ctx.lineWidth=2;
+      ctx.beginPath();
+      for (let i=0;i<N;i++){
+        const x=toX(i*dt*1000), y=toY(vals[i]);
+        i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+      }
+      ctx.stroke();
+    } else {
+      // Downsample for display
+      const step = Math.max(1, Math.floor(N/1000));
+      ctx.strokeStyle=color; ctx.lineWidth=1.2;
+      ctx.beginPath();
+      for (let i=0;i<N;i+=step){
+        const x=toX(i*dt*1000), y=toY(sig[i]);
+        i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+      }
+      ctx.stroke();
+    }
+  }
+
+  // NRZ bit stream
+  drawWave('c_bits', bits, DARK.accent, `Bit Stream  (${nb} bits, Rb=${p.rb} bps)`, true);
+  // ASK
+  drawWave('c_ask',  askSig,  DARK.green,  `ASK / OOK  (fc=${p.fc} Hz, A1=${p.a1.toFixed(2)}, A0=${p.a0})`, false);
+  // BFSK
+  drawWave('c_bfsk', bfskSig, DARK.purple, `BFSK  (f1=${p.f1} Hz → bit-1,  f2=${p.f2} Hz → bit-0)`, false);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// PLOT: PSD
+// ──────────────────────────────────────────────────────────────────
+function plotPSD(askSig, bfskSig, p) {
+  function drawPSD(canvasId, sig, color, title, marks) {
+    const canvas = document.getElementById(canvasId);
+    const {ctx,W,H} = resize(canvas);
+    clearCanvas(ctx,W,H);
+
+    const {freq, psd} = computePSD(sig, p.fs, 512);
+    const psdDB = psd.map(v => v>1e-14 ? 10*Math.log10(v) : -140);
+
+    // Clip freq to 2*max(fc,f1,f2)
+    const fmax = Math.min(p.fs/2, Math.max(p.fc,p.f1,p.f2)*2.5);
+    const imax = freq.findIndex(f=>f>fmax)||freq.length-1;
+
+    let ymin=Infinity, ymax=-Infinity;
+    for (let i=0;i<imax;i++){
+      if(psdDB[i]<ymin)ymin=psdDB[i];
+      if(psdDB[i]>ymax)ymax=psdDB[i];
+    }
+    ymin=Math.max(ymin, ymax-60);
+
+    const {pw,ph} = drawAxes(ctx,W,H,'Frequency [Hz]','PSD [dBW/Hz]',title);
+    const {toX,toY} = drawGrid(ctx,W,H,6,5,0,fmax,ymin,ymax,
+      v=>(v/1000).toFixed(1)+'k', v=>v.toFixed(0));
+
+    // Plot PSD
+    ctx.strokeStyle=color; ctx.lineWidth=1.3;
+    ctx.beginPath();
+    for (let i=0;i<imax;i++){
+      const x=toX(freq[i]), y=toY(psdDB[i]);
+      i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+
+    // Fill under curve
+    ctx.fillStyle=color.replace(')',',0.1)').replace('rgb','rgba');
+    ctx.lineTo(toX(freq[imax-1]),toY(ymin));
+    ctx.lineTo(toX(0),toY(ymin));
+    ctx.closePath(); ctx.fill();
+
+    // Mark freqs
+    ctx.setLineDash([4,3]);
+    marks.forEach(([f,lbl,c])=>{
+      if (f>0&&f<fmax){
+        const x=toX(f);
+        ctx.strokeStyle=c||DARK.orange; ctx.lineWidth=1.2;
+        ctx.beginPath(); ctx.moveTo(x,M.top); ctx.lineTo(x,M.top+ph); ctx.stroke();
+        ctx.fillStyle=c||DARK.orange; ctx.font='9px monospace'; ctx.textAlign='center';
+        ctx.fillText(lbl, x, M.top+8);
+      }
+    });
+    ctx.setLineDash([]);
+  }
+
+  drawPSD('c_psd_ask',  askSig,  DARK.green,  `ASK Power Spectrum`,
+    [[p.fc,`fc=${(p.fc/1000).toFixed(1)}k`,DARK.orange]]);
+  drawPSD('c_psd_bfsk', bfskSig, DARK.purple, `BFSK Power Spectrum`,
+    [[p.f1,`f1=${(p.f1/1000).toFixed(1)}k`,DARK.accent],[p.f2,`f2=${(p.f2/1000).toFixed(1)}k`,DARK.orange]]);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// PLOT: CORRELATOR OUTPUTS
+// ──────────────────────────────────────────────────────────────────
+function plotCorrelators(bits, rxAsk, rxBfsk, p) {
+  const nb = bits.length;
+  const askR  = correlatorASK(rxAsk, bits, p);
+  const bfskR = correlatorBFSK(rxBfsk, bits, p);
+
+  function drawStem(canvasId, stats, bits_tx, thresh, color0, color1, threshLabel, title, yLabel) {
+    const canvas = document.getElementById(canvasId);
+    const {ctx,W,H} = resize(canvas);
+    clearCanvas(ctx,W,H);
+
+    let mn=Infinity,mx=-Infinity;
+    for (let v of stats){if(v<mn)mn=v;if(v>mx)mx=v;}
+    mn=Math.min(mn,thresh||0)-Math.abs(mx-mn)*0.2;
+    mx=mx+Math.abs(mx-mn)*0.15;
+    if (mn===mx){mn-=0.001;mx+=0.001;}
+
+    const {pw,ph} = drawAxes(ctx,W,H,'Bit Index',yLabel,title);
+    const idx=Array.from({length:nb},(_,i)=>i);
+    const {toX,toY} = drawGrid(ctx,W,H,Math.min(nb-1,15),4,
+      -0.5,nb-0.5,mn,mx,
+      (v,i)=>Number.isInteger(v)?v.toFixed(0):'',
+      v=>v.toExponential(1));
+
+    // Zero line
+    const y0=toY(0);
+    ctx.strokeStyle=DARK.grid; ctx.lineWidth=0.8; ctx.setLineDash([3,3]);
+    ctx.beginPath();ctx.moveTo(M.left,y0);ctx.lineTo(M.left+pw,y0);ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Stems
+    for (let k=0;k<nb;k++){
+      const x=toX(k), y=toY(stats[k]);
+      const c = bits_tx[k]?color1:color0;
+      ctx.strokeStyle=c; ctx.lineWidth=1.5;
+      ctx.beginPath();ctx.moveTo(x,y0);ctx.lineTo(x,y);ctx.stroke();
+      ctx.fillStyle=c;
+      ctx.beginPath();ctx.arc(x,y,3.5,0,Math.PI*2);ctx.fill();
+    }
+
+    // Threshold
+    if (thresh!==undefined){
+      const yt=toY(thresh);
+      ctx.strokeStyle=DARK.orange; ctx.lineWidth=1.5; ctx.setLineDash([6,3]);
+      ctx.beginPath();ctx.moveTo(M.left,yt);ctx.lineTo(M.left+pw,yt);ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle=DARK.orange; ctx.font='9px monospace'; ctx.textAlign='left';
+      ctx.fillText(threshLabel||'threshold', M.left+4, yt-4);
+    }
+
+    // Legend
+    drawLegend(ctx,[[color1,'Bit-1 (mark)'],[color0,'Bit-0 (space)']],M.left+pw-90,M.top+10);
+  }
+
+  // ASK: single correlator output
+  drawStem('c_corr_ask', askR.stats, bits, askR.thresh,
+    DARK.red, DARK.accent,
+    `γ=${askR.thresh.toExponential(2)}`,
+    `ASK Coherent Correlator  (Eb/N0=${p.snrPreview} dB)`,
+    'Correlator Output z');
+
+  // BFSK: z1-z2 difference (positive → bit-1)
+  const diff = new Float64Array(nb);
+  for (let k=0;k<nb;k++) diff[k]=bfskR.z1[k]-bfskR.z2[k];
+  drawStem('c_corr_bfsk', diff, bits, 0,
+    DARK.red, DARK.purple,
+    'Decision boundary',
+    `BFSK Coherent Correlator  z1−z2  (bit-1 if > 0)`,
+    'z1 − z2');
+}
+
+// ──────────────────────────────────────────────────────────────────
+// PLOT: HISTOGRAMS
+// ──────────────────────────────────────────────────────────────────
+function plotHistograms(bits, rxAsk, rxBfsk, p) {
+  const askR  = correlatorASK(rxAsk, bits, p);
+  const bfskR = correlatorBFSK(rxBfsk, bits, p);
+  const bfskDiff = new Float64Array(bits.length);
+  for (let k=0;k<bits.length;k++) bfskDiff[k]=bfskR.z1[k]-bfskR.z2[k];
+
+  function drawHist(canvasId, stats, bits_tx, thresh, title) {
+    const canvas = document.getElementById(canvasId);
+    const {ctx,W,H} = resize(canvas);
+    clearCanvas(ctx,W,H);
+
+    const BINS=25;
+    let mn=Infinity,mx=-Infinity;
+    for (let v of stats){if(v<mn)mn=v;if(v>mx)mx=v;}
+    const pad=(mx-mn)*0.1||0.001;
+    mn-=pad; mx+=pad;
+    const bw=(mx-mn)/BINS;
+
+    const hist1=new Float64Array(BINS),hist0=new Float64Array(BINS);
+    const n1=bits_tx.reduce((a,b)=>a+b,0), n0=bits_tx.length-n1;
+    for (let k=0;k<stats.length;k++){
+      const b=Math.min(Math.floor((stats[k]-mn)/bw),BINS-1);
+      if (bits_tx[k]) hist1[b]++;
+      else            hist0[b]++;
+    }
+    // Normalise to density
+    if (n1>0) for (let i=0;i<BINS;i++) hist1[i]/=(n1*bw);
+    if (n0>0) for (let i=0;i<BINS;i++) hist0[i]/=(n0*bw);
+
+    const ymax=Math.max(...hist1,...hist0)*1.2||1;
+
+    const {pw,ph} = drawAxes(ctx,W,H,'Decision Statistic','Probability Density',title);
+    const {toX,toY} = drawGrid(ctx,W,H,6,4,mn,mx,0,ymax,
+      v=>v.toExponential(1),v=>v.toFixed(0));
+
+    // Draw bars
+    const barW=pw/BINS*0.9;
+    for (let i=0;i<BINS;i++){
+      const xc=toX(mn+(i+0.5)*bw);
+      if (hist0[i]>0){
+        const y=toY(hist0[i]);
+        ctx.fillStyle='rgba(247,129,102,0.65)';
+        ctx.fillRect(xc-barW/2,y,barW,toY(0)-y);
+        ctx.strokeStyle=DARK.red; ctx.lineWidth=0.5;
+        ctx.strokeRect(xc-barW/2,y,barW,toY(0)-y);
+      }
+      if (hist1[i]>0){
+        const y=toY(hist1[i]);
+        ctx.fillStyle='rgba(88,166,255,0.55)';
+        ctx.fillRect(xc-barW/2,y,barW,toY(0)-y);
+        ctx.strokeStyle=DARK.accent; ctx.lineWidth=0.5;
+        ctx.strokeRect(xc-barW/2,y,barW,toY(0)-y);
+      }
+    }
+
+    // Threshold line
+    const xt=toX(thresh);
+    ctx.strokeStyle=DARK.orange; ctx.lineWidth=2; ctx.setLineDash([6,3]);
+    ctx.beginPath();ctx.moveTo(xt,M.top);ctx.lineTo(xt,M.top+ph);ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle=DARK.orange; ctx.font='9px monospace'; ctx.textAlign='center';
+    ctx.fillText('γ='+thresh.toExponential(1),xt,M.top+9);
+
+    drawLegend(ctx,[[DARK.accent,'Bit-1 (mark)'],[DARK.red,'Bit-0 (space)'],[DARK.orange,'Decision threshold']],
+      M.left+pw-95, M.top+10);
+  }
+
+  drawHist('c_hist_ask',  askR.stats,   bits, askR.thresh,
+    `ASK Decision Histogram  (Eb/N0=${p.snrPreview} dB)`);
+  drawHist('c_hist_bfsk', bfskDiff, bits, 0,
+    `BFSK z1−z2 Histogram  (Eb/N0=${p.snrPreview} dB)`);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// PLOT: BER CURVES
+// ──────────────────────────────────────────────────────────────────
+function plotBER(berData, p) {
+  const canvas = document.getElementById('c_ber');
+  const {ctx,W,H} = resize(canvas);
+  clearCanvas(ctx,W,H);
+
+  const snrs = berData.snrs;
+  const ymin=-5, ymax=0; // log10 scale
+
+  const {pw,ph} = drawAxes(ctx,W,H,'Eb/N0 [dB]','BER (log scale)',
+    `BER vs Eb/N0  (${p.berN} bits/point, ${p.detection} detection shown)`);
+
+  const {toX,toY} = drawGrid(ctx,W,H,
+    (snrs[snrs.length-1]-snrs[0])/2, 5,
+    snrs[0],snrs[snrs.length-1], ymin,ymax,
+    v=>v.toFixed(0),
+    v=>v===-5?'10⁻⁵':v===-4?'10⁻⁴':v===-3?'10⁻³':v===-2?'10⁻²':v===-1?'10⁻¹':'10⁰');
+
+  const toLogY = v => v>0 ? toY(Math.max(Math.log10(v),ymin)) : null;
+
+  // Schemes
+  const schemes = [
+    {key:'ask_c',  color:DARK.accent,  label:'ASK Coherent',     show:['coherent','both']},
+    {key:'ask_nc', color:DARK.green,   label:'ASK Noncoherent',  show:['noncoherent','both']},
+    {key:'bfsk_c', color:DARK.purple,  label:'BFSK Coherent',    show:['coherent','both']},
+    {key:'bfsk_nc',color:DARK.orange,  label:'BFSK Noncoherent', show:['noncoherent','both']},
+  ];
+
+  schemes.forEach(s => {
+    if (!s.show.includes(p.detection)) return;
+
+    // Theoretical (dotted)
+    ctx.strokeStyle=s.color; ctx.lineWidth=1.5; ctx.setLineDash([5,3]); ctx.globalAlpha=0.6;
+    ctx.beginPath(); let first=true;
+    for (const snr of snrs){
+      const yt=toLogY(berTheory(snr,s.key));
+      if (yt===null) continue;
+      const x=toX(snr);
+      first?ctx.moveTo(x,yt):ctx.lineTo(x,yt);
+      first=false;
+    }
+    ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha=1;
+
+    // Simulated (solid + dots)
+    const simVals = berData[s.key];
+    ctx.strokeStyle=s.color; ctx.lineWidth=2;
+    ctx.beginPath(); first=true;
+    snrs.forEach((snr,i)=>{
+      const yt=toLogY(simVals[i]);
+      if (yt===null) return;
+      const x=toX(snr);
+      first?ctx.moveTo(x,yt):ctx.lineTo(x,yt);
+      first=false;
+    });
+    ctx.stroke();
+
+    ctx.fillStyle=s.color;
+    snrs.forEach((snr,i)=>{
+      const yt=toLogY(simVals[i]);
+      if (yt===null) return;
+      ctx.beginPath();ctx.arc(toX(snr),yt,4,0,Math.PI*2);ctx.fill();
+    });
+  });
+
+  // Legend
+  const vis=schemes.filter(s=>s.show.includes(p.detection));
+  const items = vis.flatMap(s=>[
+    [s.color, s.label+' (sim)'],
+    [s.color.replace(')',',0.4)').replace('rgb','rgba')||s.color, s.label+' (theory, dotted)']
+  ]);
+  drawLegend(ctx, vis.map(s=>[s.color,s.label+' (sim◼ / theory···)']),
+    M.left+4, M.top+8);
+
+  // Current SNR marker
+  const xsnr=toX(p.snrPreview);
+  ctx.strokeStyle=DARK.yellow; ctx.lineWidth=1.2; ctx.setLineDash([4,4]);
+  ctx.beginPath();ctx.moveTo(xsnr,M.top);ctx.lineTo(xsnr,M.top+ph);ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle=DARK.yellow; ctx.font='9px monospace'; ctx.textAlign='center';
+  ctx.fillText(`${p.snrPreview}dB`,xsnr,M.top+8);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// PLOT: ORTHOGONALITY
+// ──────────────────────────────────────────────────────────────────
+function plotOrthogonality(p) {
+  const canvas = document.getElementById('c_orth');
+  const {ctx,W,H} = resize(canvas);
+  clearCanvas(ctx,W,H);
+
+  const {dfArr,ipArr} = computeOrthoCurve(p);
+
+  let mn=Infinity,mx=-Infinity;
+  for (let v of ipArr){if(v<mn)mn=v;if(v>mx)mx=v;}
+  const pad=Math.max(Math.abs(mx-mn)*0.15,1e-5);
+  mn-=pad; mx+=pad;
+
+  const {pw,ph} = drawAxes(ctx,W,H,'Δf / Rb  (normalised tone spacing)',
+    '⟨φ₁, φ₂⟩  [inner product, s]',
+    `BFSK Orthogonality — ⟨φ₁,φ₂⟩ vs Normalised Tone Spacing  (f1=${p.f1}Hz, f2=${p.f2}Hz)`);
+
+  const xmax=dfArr[dfArr.length-1];
+  const {toX,toY} = drawGrid(ctx,W,H,8,6,0,xmax,mn,mx,
+    v=>v.toFixed(1),v=>v.toExponential(0));
+
+  // Zero line
+  const y0=toY(0);
+  ctx.strokeStyle=DARK.text; ctx.lineWidth=0.8;
+  ctx.beginPath();ctx.moveTo(M.left,y0);ctx.lineTo(M.left+pw,y0);ctx.stroke();
+
+  // Mark orthogonal points (Δf·Tb = k/2)
+  ctx.setLineDash([4,3]);
+  for (let k=1;k<=8;k++){
+    const dfNorm=k/2;
+    if (dfNorm<=xmax){
+      const x=toX(dfNorm);
+      ctx.strokeStyle=DARK.orange; ctx.lineWidth=0.9;
+      ctx.beginPath();ctx.moveTo(x,M.top);ctx.lineTo(x,M.top+ph);ctx.stroke();
+      ctx.fillStyle=DARK.orange; ctx.font='8px monospace'; ctx.textAlign='center';
+      ctx.fillText(`k=${k}`, x, M.top+9);
+    }
+  }
+  ctx.setLineDash([]);
+
+  // Plot IP curve
+  ctx.strokeStyle=DARK.purple; ctx.lineWidth=1.8;
+  ctx.beginPath();
+  for (let i=0;i<dfArr.length;i++){
+    const x=toX(dfArr[i]), y=toY(ipArr[i]);
+    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+
+  // Mark current Δf
+  const curDfNorm = Math.abs(p.f2-p.f1)/p.rb;
+  if (curDfNorm<=xmax){
+    const x=toX(curDfNorm);
+    // Find ip at current Δf
+    const idx=dfArr.findIndex(v=>v>=curDfNorm);
+    if (idx>=0){
+      const ip=ipArr[idx];
+      const y=toY(ip);
+      ctx.fillStyle=DARK.accent;
+      ctx.beginPath();ctx.arc(x,y,7,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle=DARK.text2; ctx.font='bold 9px monospace'; ctx.textAlign='center';
+      ctx.fillText(`Δf·Tb=${curDfNorm.toFixed(2)}`,x,M.top+ph+28);
+    }
+  }
+
+  // Table inset
+  const tx=M.left+pw-180, ty=M.top+10;
+  ctx.fillStyle='rgba(28,33,40,0.9)'; ctx.strokeStyle=DARK.border; ctx.lineWidth=1;
+  ctx.roundRect(tx,ty,170,95,6); ctx.fill(); ctx.stroke();
+  ctx.fillStyle=DARK.green; ctx.font='bold 9px monospace'; ctx.textAlign='left';
+  ctx.fillText('k   Δf·Tb   ⟨φ₁,φ₂⟩   Status',tx+6,ty+14);
+  for (let k=1;k<=5;k++){
+    const dfNorm=k/2;
+    const fmid=(p.f1+p.f2)/2;
+    const ip=innerProduct(fmid-dfNorm*p.rb/2, fmid+dfNorm*p.rb/2, p.Tb, p.fs);
+    const ok=Math.abs(ip)<5e-5;
+    ctx.fillStyle=ok?DARK.green:DARK.red;
+    ctx.fillText(`${k}   ${dfNorm.toFixed(1)}     ${ip.toExponential(1)}  ${ok?'✓':'✗'}`,
+      tx+6, ty+14+k*14);
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────
+// LIVE STATS UPDATE
+// ──────────────────────────────────────────────────────────────────
+function updateStats(bits, rxAsk, rxBfsk, p) {
+  // fs
+  setText('st_fs', `${(p.fs/1000).toFixed(1)} kHz`, 'info');
+
+  // Δf · Tb
+  const dfTb = Math.abs(p.f2-p.f1)/p.rb;
+  setText('st_df', dfTb.toFixed(2), 'info');
+
+  // Orthogonality
+  const ip = innerProduct(p.f1, p.f2, p.Tb, p.fs);
+  const isOrth = Math.abs(ip) < 5e-5;
+  setText('st_orth', isOrth ? '✓ YES' : '✗ NO', isOrth?'good':'bad');
+  setText('st_ip', ip.toExponential(2), Math.abs(ip)<5e-5?'good':'warn');
+
+  // BER at preview SNR
+  const snr = p.snrPreview;
+  const b_ask_c  = berMC('ask','coherent',snr,p,p.berN);
+  const b_ask_nc = berMC('ask','noncoherent',snr,p,p.berN);
+  const b_bfsk_c = berMC('bfsk','coherent',snr,p,p.berN);
+  const b_bfsk_nc= berMC('bfsk','noncoherent',snr,p,p.berN);
+
+  const berClass=v=>v<0.01?'good':v<0.1?'warn':'bad';
+  setText('st_ask_c',  b_ask_c ===0?'0 (too low)':b_ask_c.toExponential(2),  berClass(b_ask_c));
+  setText('st_ask_n',  b_ask_nc===0?'0 (too low)':b_ask_nc.toExponential(2), berClass(b_ask_nc));
+  setText('st_bfsk_c', b_bfsk_c===0?'0 (too low)':b_bfsk_c.toExponential(2),berClass(b_bfsk_c));
+  setText('st_bfsk_n', b_bfsk_nc===0?'0 (too low)':b_bfsk_nc.toExponential(2),berClass(b_bfsk_nc));
+}
+
+function setText(id,text,cls){
+  const el=document.getElementById(id);
+  el.textContent=text;
+  el.className='sval'+(cls?' '+cls:'');
+}
+
+// ──────────────────────────────────────────────────────────────────
+// MAIN SIMULATION RUNNER
+// ──────────────────────────────────────────────────────────────────
+let lastBerData = null;
+let lastBits=null, lastAsk=null, lastBfsk=null, lastRxA=null, lastRxB=null;
+
+function renderCurrentTab(){
+  if (!lastBits) return;
+  setStatus(true);
+  try {
+    switch(currentTab){
+      case 0: break; // Guide tab
+      case 1: plotWaveforms(lastBits, lastAsk, lastBfsk, P); break;
+      case 2: plotPSD(lastAsk, lastBfsk, P); break;
+      case 3: plotCorrelators(lastBits, lastRxA, lastRxB, P); break;
+      case 4: plotHistograms(lastBits, lastRxA, lastRxB, P); break;
+      case 5: if(lastBerData) plotBER(lastBerData, P); break;
+      case 6: plotOrthogonality(P); break;
+    }
+  } catch(e){ console.error(e); }
+  setStatus(false);
+}
+
+function setStatus(running){
+  const dot=document.getElementById('statusDot');
+  dot.classList.toggle('running', running);
+  document.getElementById('ft_time').textContent=running?'Computing…':'Ready';
+}
+
+async function runAll(){
+  if (simRunning) return;
+  simRunning=true;
+  setStatus(true);
+
+  const t0=performance.now();
+
+  await new Promise(r=>setTimeout(r,0)); // yield to browser
+
+  try {
+    const nb = Math.max(P.nbDisplay, P.berN);
+    const bits = generateBits(nb, P.seed);
+    const dispBits = bits.slice(0, P.nbDisplay);
+
+    const askFull  = modulateASK(bits, P);
+    const bfskFull = modulateBFSK(bits, P);
+
+    const askDisp  = askFull.slice(0, P.nbDisplay*P.sps);
+    const bfskDisp = bfskFull.slice(0, P.nbDisplay*P.sps);
+
+    const rxAsk  = addAWGN(askFull,  P.snrPreview, P, P.seed+1);
+    const rxBfsk = addAWGN(bfskFull, P.snrPreview, P, P.seed+2);
+
+    lastBits  = dispBits;
+    lastAsk   = askDisp;
+    lastBfsk  = bfskDisp;
+    lastRxA   = rxAsk.slice(0, P.nbDisplay*P.sps);
+    lastRxB   = rxBfsk.slice(0, P.nbDisplay*P.sps);
+
+    // BER (use full-length signals)
+    lastBerData = computeAllBER(P);
+
+    await new Promise(r=>setTimeout(r,0));
+
+    // Update stats with display-length signals
+    const rxAskDisp  = rxAsk.slice(0, P.nbDisplay*P.sps);
+    const rxBfskDisp = rxBfsk.slice(0, P.nbDisplay*P.sps);
+    updateStats(dispBits, rxAskDisp, rxBfskDisp, P);
+
+    renderCurrentTab();
+
+    const dt=(performance.now()-t0).toFixed(0);
+    document.getElementById('ft_time').textContent=`Done in ${dt} ms`;
+  } catch(e){ console.error(e); document.getElementById('ft_time').textContent='Error!'; }
+
+  simRunning=false;
+  setStatus(false);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// WINDOW RESIZE → REDRAW
+// ──────────────────────────────────────────────────────────────────
+let resizeTimer;
+window.addEventListener('resize', ()=>{
+  clearTimeout(resizeTimer);
+  resizeTimer=setTimeout(renderCurrentTab, 150);
+});
+
+// ──────────────────────────────────────────────────────────────────
+// STARTUP
+// ──────────────────────────────────────────────────────────────────
+window.addEventListener('load', ()=>runAll());
+
+// CanvasRenderingContext2D.roundRect polyfill
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function(x,y,w,h,r){
+    this.beginPath();
+    this.moveTo(x+r,y);
+    this.arcTo(x+w,y,x+w,y+h,r);
+    this.arcTo(x+w,y+h,x,y+h,r);
+    this.arcTo(x,y+h,x,y,r);
+    this.arcTo(x,y,x+w,y,r);
+    this.closePath();
+  };
+}
+</script>
+</body>
+</html>"""
+
+with open("index.html","w",encoding="utf-8") as f:
+    f.write(HTML)
+
+size = os.path.getsize("index.html")/1024
+print(f"index.html written — {size:.1f} KB")
+print("Open index.html in any browser — fully interactive, no internet needed.")
